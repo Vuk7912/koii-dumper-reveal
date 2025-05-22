@@ -1,6 +1,18 @@
 {
+  "name": "koii-token-access-control",
+  "version": "1.0.0",
+  "description": "Token generation access control system",
+  "main": "dist/token-access-control.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": ["koii", "blockchain", "token", "access-control"],
+  "author": "",
+  "license": "ISC",
   "devDependencies": {
-    "typescript": "^5.8.3",
-    "vitest": "^3.1.4"
+    "typescript": "^4.9.5",
+    "vitest": "^0.34.0"
   }
 }
