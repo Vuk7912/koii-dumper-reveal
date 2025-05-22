@@ -8,7 +8,8 @@ describe('TokenAccessControl', () => {
     accessControl = new TokenAccessControl({
       minDumpAmount: 100,
       minHoldingPeriod: 1, // Very short for testing
-      maxDumpFrequency: 3
+      maxDumpFrequency: 3,
+      frequencyResetPeriod: 10 // Short reset period for testing
     });
   });
 
@@ -27,8 +28,8 @@ describe('TokenAccessControl', () => {
       expect(result.reason).toBe('Dump amount below minimum threshold');
     });
 
-    it('should limit maximum dump frequency', () => {
-      // Simulate multiple dumps
+    it('should allow dump frequency within limit', () => {
+      // First three dumps should be allowed
       for (let i = 0; i < 3; i++) {
         const result = accessControl.verifyWalletEligibility('wallet2', 200);
         expect(result.isEligible).toBe(true);
