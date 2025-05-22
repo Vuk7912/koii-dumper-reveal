@@ -86,7 +86,7 @@ export class TokenAccessControl {
       };
     }
 
-    // Check dump frequency
+    // Check dump frequency first
     if (record.dumpCount >= this.dumpingCriteria.maxDumpFrequency) {
       return { 
         isEligible: false, 
@@ -94,7 +94,7 @@ export class TokenAccessControl {
       };
     }
 
-    // Check holding period between dumps
+    // Then check holding period
     const timeSinceLastDump = currentTime - record.lastDumpTimestamp;
     if (timeSinceLastDump < this.dumpingCriteria.minHoldingPeriod) {
       return { 
