@@ -1,64 +1,98 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { TokenAccessControl, UserRole } from '../src/token-access-control';
+import { TokenAccessControl } from '../src/token-access-control';
 
 describe('TokenAccessControl', () => {
   let accessControl: TokenAccessControl;
 
   beforeEach(() => {
-    accessControl = new TokenAccessControl();
-  });
-
-  describe('canGenerateTokens', () => {
-    it('should not allow token generation for guest role', () => {
-      expect(accessControl.canGenerateTokens(UserRole.GUEST)).toBe(false);
-    });
-
-    it('should allow token generation for user role within limit', () => {
-      expect(accessControl.canGenerateTokens(UserRole.USER, 50)).toBe(true);
-    });
-
-    it('should prevent token generation for user role when exceeding limit', () => {
-      expect(accessControl.canGenerateTokens(UserRole.USER, 150)).toBe(false);
-    });
-
-    it('should allow unlimited token generation for super admin', () => {
-      expect(accessControl.canGenerateTokens(UserRole.SUPER_ADMIN, Number.MAX_SAFE_INTEGER)).toBe(true);
-    });
-
-    it('should throw error for invalid role', () => {
-      expect(() => accessControl.canGenerateTokens('invalid_role' as UserRole))
-        .toThrow('Invalid user role');
+    accessControl = new TokenAccessControl({
+      minDumpAmount: 100,
+      minHoldingPeriod: 86400, // 24 hours
+      maxDumpFrequency: 3
     });
   });
 
-  describe('getMaxTokens', () => {
-    it('should return correct max tokens for each role', () => {
-      expect(accessControl.getMaxTokens(UserRole.GUEST)).toBe(0);
-      expect(accessControl.getMaxTokens(UserRole.USER)).toBe(100);
-      expect(accessControl.getMaxTokens(UserRole.ADMIN)).toBe(1000);
-      expect(accessControl.getMaxTokens(UserRole.SUPER_ADMIN)).toBe(Number.MAX_SAFE_INTEGER);
+  describe('Wallet Verification', () => {
+    it('should allow first-time dump meeting minimum criteria', () => {
+      const result = accessControl.verifyWalletEligibility('wallet1', 150);
+      
+      expect(result.isEligible).toBe(true);
+      expect(result.verificationNonce).toBeDefined();
+    });
+
+    it('should reject dump below minimum amount', () => {
+      const result = accessControl.verifyWalletEligibility('wallet1', 50);
+      
+      expect(result.isEligible).toBe(false);
+      expect(result.reason).toBe('Dump amount below minimum threshold');
+    });
+
+    it('should limit maximum dump frequency', () => {
+      // Simulate multiple dumps
+      for (let i = 0; i < 3; i++) {
+        accessControl.verifyWalletEligibility('wallet2', 200);
+      }
+
+      // Fourth dump should be rejected
+      const result = accessControl.verifyWalletEligibility('wallet2', 200);
+      
+      expect(result.isEligible).toBe(false);
+      expect(result.reason).toBe('Maximum dump frequency exceeded');
+    });
+
+    it('should validate generated verification nonce', () => {
+      const walletAddress = 'wallet3';
+      const verificationResult = accessControl.verifyWalletEligibility(walletAddress, 200);
+      
+      expect(verificationResult.isEligible).toBe(true);
+      
+      // Validate the nonce
+      const isValid = accessControl.validateVerificationNonce(
+        walletAddress, 
+        verificationResult.verificationNonce!
+      );
+      
+      expect(isValid).toBe(true);
+
+      // Subsequent validation should fail (nonce is single-use)
+      const secondValidation = accessControl.validateVerificationNonce(
+        walletAddress, 
+        verificationResult.verificationNonce!
+      );
+      
+      expect(secondValidation).toBe(false);
     });
   });
 
-  describe('setRolePermission', () => {
-    it('should allow updating permissions for non-guest roles', () => {
-      accessControl.setRolePermission(UserRole.USER, {
-        role: UserRole.USER,
-        canGenerate: true,
-        maxTokensPerCycle: 200
+  describe('Dumping Criteria Management', () => {
+    it('should allow updating dumping criteria', () => {
+      const originalCriteria = accessControl.getDumpingCriteria();
+      
+      accessControl.updateDumpingCriteria({
+        minDumpAmount: 200,
+        minHoldingPeriod: 172800 // 48 hours
       });
 
-      expect(accessControl.getMaxTokens(UserRole.USER)).toBe(200);
+      const updatedCriteria = accessControl.getDumpingCriteria();
+      
+      expect(updatedCriteria.minDumpAmount).toBe(200);
+      expect(updatedCriteria.minHoldingPeriod).toBe(172800);
+      expect(updatedCriteria.maxDumpFrequency).toBe(originalCriteria.maxDumpFrequency);
     });
 
-    it('should prevent modifying guest role permissions', () => {
-      expect(() => 
-        accessControl.setRolePermission(UserRole.GUEST, {
-          role: UserRole.GUEST,
-          canGenerate: true,
-          maxTokensPerCycle: 10
-        })
-      ).toThrow('Cannot modify guest role permissions');
+    it('should reset wallet record', () => {
+      const walletAddress = 'wallet4';
+      
+      // First dump
+      const firstResult = accessControl.verifyWalletEligibility(walletAddress, 200);
+      expect(firstResult.isEligible).toBe(true);
+
+      // Reset record
+      accessControl.resetWalletRecord(walletAddress);
+
+      // Should now be eligible again
+      const secondResult = accessControl.verifyWalletEligibility(walletAddress, 200);
+      expect(secondResult.isEligible).toBe(true);
     });
   });
 });
