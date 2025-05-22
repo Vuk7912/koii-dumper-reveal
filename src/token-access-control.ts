@@ -7,11 +7,13 @@ export interface WalletDumpingCriteria {
   minDumpAmount: number;
   minHoldingPeriod: number; // in seconds
   maxDumpFrequency: number; // dumps per time period
+  frequencyResetPeriod: number; // period after which frequency count resets
 }
 
 export interface WalletVerificationRecord {
   walletAddress: string;
   lastDumpTimestamp: number;
+  firstDumpInPeriodTimestamp: number;
   totalDumpAmount: number;
   dumpCount: number;
   verificationNonce: string;
@@ -27,7 +29,8 @@ export class TokenAccessControl {
     this.dumpingCriteria = {
       minDumpAmount: criteria?.minDumpAmount ?? 100, // Default minimum dump amount
       minHoldingPeriod: criteria?.minHoldingPeriod ?? 86400, // Default 24 hours
-      maxDumpFrequency: criteria?.maxDumpFrequency ?? 3 // Default max 3 dumps per period
+      maxDumpFrequency: criteria?.maxDumpFrequency ?? 3, // Default max 3 dumps per period
+      frequencyResetPeriod: criteria?.frequencyResetPeriod ?? 86400 // Default 24 hours reset period
     };
   }
 
@@ -73,6 +76,7 @@ export class TokenAccessControl {
       const newRecord: WalletVerificationRecord = {
         walletAddress,
         lastDumpTimestamp: currentTime,
+        firstDumpInPeriodTimestamp: currentTime,
         totalDumpAmount: dumpAmount,
         dumpCount: 1,
         verificationNonce: this.generateVerificationNonce(walletAddress)
@@ -86,7 +90,15 @@ export class TokenAccessControl {
       };
     }
 
-    // Check dump frequency first
+    // Check if frequency reset period has passed
+    const timeSincePeriodStart = currentTime - record.firstDumpInPeriodTimestamp;
+    if (timeSincePeriodStart >= this.dumpingCriteria.frequencyResetPeriod) {
+      // Reset dump count and first dump timestamp
+      record.dumpCount = 0;
+      record.firstDumpInPeriodTimestamp = currentTime;
+    }
+
+    // Check dump frequency
     if (record.dumpCount >= this.dumpingCriteria.maxDumpFrequency) {
       return { 
         isEligible: false, 
@@ -94,7 +106,7 @@ export class TokenAccessControl {
       };
     }
 
-    // Then check holding period
+    // Check holding period
     const timeSinceLastDump = currentTime - record.lastDumpTimestamp;
     if (timeSinceLastDump < this.dumpingCriteria.minHoldingPeriod) {
       return { 
@@ -168,7 +180,8 @@ export class TokenAccessControl {
     this.dumpingCriteria = {
       minDumpAmount: newCriteria.minDumpAmount ?? this.dumpingCriteria.minDumpAmount,
       minHoldingPeriod: newCriteria.minHoldingPeriod ?? this.dumpingCriteria.minHoldingPeriod,
-      maxDumpFrequency: newCriteria.maxDumpFrequency ?? this.dumpingCriteria.maxDumpFrequency
+      maxDumpFrequency: newCriteria.maxDumpFrequency ?? this.dumpingCriteria.maxDumpFrequency,
+      frequencyResetPeriod: newCriteria.frequencyResetPeriod ?? this.dumpingCriteria.frequencyResetPeriod
     };
   }
 }
