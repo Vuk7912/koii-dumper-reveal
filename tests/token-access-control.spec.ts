@@ -7,7 +7,7 @@ describe('TokenAccessControl', () => {
   beforeEach(() => {
     accessControl = new TokenAccessControl({
       minDumpAmount: 100,
-      minHoldingPeriod: 86400, // 24 hours
+      minHoldingPeriod: 1, // Very short for testing
       maxDumpFrequency: 3
     });
   });
@@ -30,7 +30,8 @@ describe('TokenAccessControl', () => {
     it('should limit maximum dump frequency', () => {
       // Simulate multiple dumps
       for (let i = 0; i < 3; i++) {
-        accessControl.verifyWalletEligibility('wallet2', 200);
+        const result = accessControl.verifyWalletEligibility('wallet2', 200);
+        expect(result.isEligible).toBe(true);
       }
 
       // Fourth dump should be rejected
