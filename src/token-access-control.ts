@@ -41,6 +41,10 @@ export class TokenAccessControl {
       throw new Error('Invalid user role');
     }
 
+    if (role === UserRole.SUPER_ADMIN) {
+      return true;
+    }
+
     return permission.canGenerate && 
            currentTokenCount < permission.maxTokensPerCycle;
   }
