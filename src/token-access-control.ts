@@ -1,78 +1,174 @@
+import { createHash } from 'crypto';
+
 /**
- * Token Generation Access Control
- * Manages roles, permissions, and access validation for token generation
+ * Wallet Dumping Verification and Token Generation Access Control
  */
-export enum UserRole {
-  GUEST = 'guest',
-  USER = 'user',
-  ADMIN = 'admin',
-  SUPER_ADMIN = 'super_admin'
+export interface WalletDumpingCriteria {
+  minDumpAmount: number;
+  minHoldingPeriod: number; // in seconds
+  maxDumpFrequency: number; // dumps per time period
 }
 
-export interface TokenGenerationPermission {
-  role: UserRole;
-  canGenerate: boolean;
-  maxTokensPerCycle: number;
+export interface WalletVerificationRecord {
+  walletAddress: string;
+  lastDumpTimestamp: number;
+  totalDumpAmount: number;
+  dumpCount: number;
+  verificationNonce: string;
 }
 
 export class TokenAccessControl {
-  private permissionMap: Map<UserRole, TokenGenerationPermission>;
+  // In-memory storage for wallet verification (in production, use persistent storage)
+  private walletRecords: Map<string, WalletVerificationRecord>;
+  private dumpingCriteria: WalletDumpingCriteria;
 
-  constructor() {
-    // Define default permission rules
-    this.permissionMap = new Map([
-      [UserRole.GUEST, { role: UserRole.GUEST, canGenerate: false, maxTokensPerCycle: 0 }],
-      [UserRole.USER, { role: UserRole.USER, canGenerate: true, maxTokensPerCycle: 100 }],
-      [UserRole.ADMIN, { role: UserRole.ADMIN, canGenerate: true, maxTokensPerCycle: 1000 }],
-      [UserRole.SUPER_ADMIN, { role: UserRole.SUPER_ADMIN, canGenerate: true, maxTokensPerCycle: Number.MAX_SAFE_INTEGER }]
-    ]);
+  constructor(criteria?: Partial<WalletDumpingCriteria>) {
+    this.walletRecords = new Map();
+    this.dumpingCriteria = {
+      minDumpAmount: criteria?.minDumpAmount ?? 100, // Default minimum dump amount
+      minHoldingPeriod: criteria?.minHoldingPeriod ?? 86400, // Default 24 hours
+      maxDumpFrequency: criteria?.maxDumpFrequency ?? 3 // Default max 3 dumps per period
+    };
   }
 
   /**
-   * Check if a user can generate tokens
-   * @param role User's role
-   * @param currentTokenCount Current number of tokens already generated
-   * @returns Boolean indicating if token generation is allowed
+   * Generate a cryptographically secure verification nonce
+   * @param walletAddress Wallet address to generate nonce for
+   * @returns Secure verification nonce
    */
-  canGenerateTokens(role: UserRole, currentTokenCount: number = 0): boolean {
-    const permission = this.permissionMap.get(role);
+  private generateVerificationNonce(walletAddress: string): string {
+    const timestamp = Date.now();
+    const randomSalt = Math.random().toString(36).substring(2);
+    return createHash('sha256')
+      .update(`${walletAddress}:${timestamp}:${randomSalt}`)
+      .digest('hex');
+  }
+
+  /**
+   * Verify wallet eligibility for token generation based on dumping criteria
+   * @param walletAddress Wallet address to verify
+   * @param dumpAmount Amount of tokens dumped
+   * @returns Verification result with eligibility and nonce
+   */
+  verifyWalletEligibility(
+    walletAddress: string, 
+    dumpAmount: number
+  ): { 
+    isEligible: boolean, 
+    verificationNonce?: string,
+    reason?: string 
+  } {
+    const currentTime = Date.now() / 1000; // Convert to seconds
+    let record = this.walletRecords.get(walletAddress);
+
+    // First-time dumper
+    if (!record) {
+      if (dumpAmount < this.dumpingCriteria.minDumpAmount) {
+        return { 
+          isEligible: false, 
+          reason: 'Dump amount below minimum threshold' 
+        };
+      }
+
+      const newRecord: WalletVerificationRecord = {
+        walletAddress,
+        lastDumpTimestamp: currentTime,
+        totalDumpAmount: dumpAmount,
+        dumpCount: 1,
+        verificationNonce: this.generateVerificationNonce(walletAddress)
+      };
+
+      this.walletRecords.set(walletAddress, newRecord);
+
+      return { 
+        isEligible: true, 
+        verificationNonce: newRecord.verificationNonce 
+      };
+    }
+
+    // Check dump frequency
+    if (record.dumpCount >= this.dumpingCriteria.maxDumpFrequency) {
+      return { 
+        isEligible: false, 
+        reason: 'Maximum dump frequency exceeded' 
+      };
+    }
+
+    // Check holding period between dumps
+    const timeSinceLastDump = currentTime - record.lastDumpTimestamp;
+    if (timeSinceLastDump < this.dumpingCriteria.minHoldingPeriod) {
+      return { 
+        isEligible: false, 
+        reason: 'Minimum holding period not met' 
+      };
+    }
+
+    // Update wallet record
+    record.lastDumpTimestamp = currentTime;
+    record.totalDumpAmount += dumpAmount;
+    record.dumpCount += 1;
+    record.verificationNonce = this.generateVerificationNonce(walletAddress);
+
+    this.walletRecords.set(walletAddress, record);
+
+    return { 
+      isEligible: true, 
+      verificationNonce: record.verificationNonce 
+    };
+  }
+
+  /**
+   * Validate a previously generated verification nonce
+   * @param walletAddress Wallet address
+   * @param nonce Verification nonce to validate
+   * @returns Validation result
+   */
+  validateVerificationNonce(
+    walletAddress: string, 
+    nonce: string
+  ): boolean {
+    const record = this.walletRecords.get(walletAddress);
     
-    if (!permission) {
-      throw new Error('Invalid user role');
+    if (!record) {
+      return false;
     }
 
-    if (role === UserRole.SUPER_ADMIN) {
-      return true;
+    // Nonce is valid only once and expires after use
+    const isValid = record.verificationNonce === nonce;
+    if (isValid) {
+      // Invalidate the nonce after successful validation
+      record.verificationNonce = '';
+      this.walletRecords.set(walletAddress, record);
     }
 
-    return permission.canGenerate && 
-           currentTokenCount < permission.maxTokensPerCycle;
+    return isValid;
   }
 
   /**
-   * Get maximum tokens allowed for a specific role
-   * @param role User's role
-   * @returns Maximum number of tokens allowed
+   * Reset wallet dumping record (for testing or administrative purposes)
+   * @param walletAddress Wallet address to reset
    */
-  getMaxTokens(role: UserRole): number {
-    const permission = this.permissionMap.get(role);
-    
-    if (!permission) {
-      throw new Error('Invalid user role');
-    }
-
-    return permission.maxTokensPerCycle;
+  resetWalletRecord(walletAddress: string): void {
+    this.walletRecords.delete(walletAddress);
   }
 
   /**
-   * Add or update a custom role permission
-   * @param role User role to configure
-   * @param permission Token generation permission details
+   * Get current dumping criteria
+   * @returns Current wallet dumping criteria
    */
-  setRolePermission(role: UserRole, permission: TokenGenerationPermission): void {
-    if (role === UserRole.GUEST) {
-      throw new Error('Cannot modify guest role permissions');
-    }
-    this.permissionMap.set(role, permission);
+  getDumpingCriteria(): WalletDumpingCriteria {
+    return { ...this.dumpingCriteria };
+  }
+
+  /**
+   * Update dumping criteria (with validation)
+   * @param newCriteria Partial update to dumping criteria
+   */
+  updateDumpingCriteria(newCriteria: Partial<WalletDumpingCriteria>): void {
+    this.dumpingCriteria = {
+      minDumpAmount: newCriteria.minDumpAmount ?? this.dumpingCriteria.minDumpAmount,
+      minHoldingPeriod: newCriteria.minHoldingPeriod ?? this.dumpingCriteria.minHoldingPeriod,
+      maxDumpFrequency: newCriteria.maxDumpFrequency ?? this.dumpingCriteria.maxDumpFrequency
+    };
   }
 }
